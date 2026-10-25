@@ -62,6 +62,12 @@ def v1_model_args(spec: str, base_url: str | None) -> tuple[list[str], dict]:
         url = base_url or os.environ.get("OPENAI_BASE_URL",
                                          "https://api.openai.com/v1")
         return ["--model", f"openai:{model}", "--base-url", url], env
+    if spec.startswith("xai:"):
+        model = spec.split(":", 1)[1]
+        url = base_url or os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1")
+        if os.environ.get("XAI_API_KEY"):
+            env["OPENAI_API_KEY"] = os.environ["XAI_API_KEY"]
+        return ["--model", f"openai:{model}", "--base-url", url], env
     raise SystemExit(f"cannot map model spec {spec!r} onto the v1 benchmark")
 
 

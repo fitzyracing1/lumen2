@@ -16,7 +16,11 @@ Spec strings (CLI --model / env LUMEN2_MODEL):
   ollama:<model>            e.g. ollama:qwen2.5-coder:1.5b  (http://127.0.0.1:11434/v1)
   amalia                    = ollama:amalia:latest
   openai:<model>            e.g. openai:gpt-4.1-mini        (needs OPENAI_API_KEY)
-  url:<base_url>::<model>   any other OpenAI-compatible endpoint
+  xai:<model>               e.g. xai:grok-4.6               (needs XAI_API_KEY, https://api.x.ai/v1)
+  url:<base_url>::<model>   any other OpenAI-compatible endpoint (key: LUMEN2_API_KEY)
+
+Any backend can take its key from a named env var with api_key_env
+(CLI --api-key-env NAME); the key itself is never printed or logged.
 """
 
 from __future__ import annotations
@@ -50,8 +54,14 @@ class Backend:
         return 0
 
 
-def from_spec(spec: str | None = None, base_url: str | None = None) -> Backend:
+def from_spec(spec: str | None = None, base_url: str | None = None,
+              api_key_env: str | None = None) -> Backend:
     """Build a backend from a spec string (or LUMEN2_MODEL, default stub)."""
+    def key_from(*names):
+        for name in ((api_key_env,) if api_key_env else ()) + names:
+            if name and os.environ.get(name):
+                return os.environ[name]
+        return None
     from lumen2.backends.openai_compat import OpenAICompatBackend
     from lumen2.backends.stub import StubBackend
 
@@ -67,7 +77,7 @@ def from_spec(spec: str | None = None, base_url: str | None = None) -> Backend:
         return OpenAICompatBackend(
             base_url=base_url or os.environ.get("OLLAMA_BASE_URL",
                                                 "http://127.0.0.1:11434/v1"),
-            api_key=os.environ.get("OLLAMA_API_KEY"),
+            api_key=key_from("OLLAMA_API_KEY"),
             model=model,
             # Small local models mangle native tool calls more often than
             # they mangle JSON; default to the JSON-action protocol.
@@ -77,20 +87,28 @@ def from_spec(spec: str | None = None, base_url: str | None = None) -> Backend:
         model = spec.split(":", 1)[1]
         url = base_url or os.environ.get("OPENAI_BASE_URL",
                                          "https://api.openai.com/v1")
-        key = os.environ.get("OPENAI_API_KEY")
+        key = key_from("OPENAI_API_KEY", "LUMEN2_API_KEY")
         if "api.openai.com" in url and not key:
             raise BackendError("openai:<model> needs OPENAI_API_KEY")
         return OpenAICompatBackend(base_url=url, api_key=key, model=model,
                                    native_tools=True, label=f"openai:{model}")
+    if spec.startswith("xai:"):
+        model = spec.split(":", 1)[1]
+        url = base_url or os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1")
+        key = key_from("XAI_API_KEY", "LUMEN2_API_KEY")
+        if not key:
+            raise BackendError("xai:<model> needs XAI_API_KEY")
+        return OpenAICompatBackend(base_url=url, api_key=key, model=model,
+                                   native_tools=True, label=f"xai:{model}")
     if spec.startswith("url:"):
         rest = spec[4:]
         if "::" not in rest:
             raise BackendError("url spec is url:<base_url>::<model>")
         url, model = rest.rsplit("::", 1)
         return OpenAICompatBackend(base_url=base_url or url,
-                                   api_key=os.environ.get("LUMEN2_API_KEY"),
+                                   api_key=key_from("LUMEN2_API_KEY"),
                                    model=model, native_tools=False,
                                    label=f"url:{model}")
     raise BackendError(
         f"unknown model spec {spec!r} (expected stub, ollama:<model>, amalia, "
-        f"openai:<model>, or url:<base_url>::<model>)")
+        f"openai:<model>, xai:<model>, or url:<base_url>::<model>)")

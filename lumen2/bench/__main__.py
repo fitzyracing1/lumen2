@@ -27,7 +27,9 @@ def main(argv: list[str] | None = None) -> int:
                     "withholds, steps, tokens, and time.")
     parser.add_argument("--model", default="stub",
                         help="stub (default) | ollama:<model> | amalia | "
-                             "openai:<model> | url:<base_url>::<model>")
+                             "openai:<model> | xai:<model> | url:<base_url>::<model>")
+    parser.add_argument("--api-key-env", default=None, metavar="NAME",
+                        help="read the API key from this env var (never printed)")
     parser.add_argument("--base-url", default=None)
     parser.add_argument("--fixtures", default=None,
                         help="comma-separated fixture names (default: all)")
@@ -43,10 +45,13 @@ def main(argv: list[str] | None = None) -> int:
                              "(default: bench/results/<model>[-mem])")
     parser.add_argument("--check-only", action="store_true",
                         help="only check backend reachability, then exit")
+    parser.add_argument("--bucket", default=None, metavar="FILE",
+                        help="BoundBucket limits (.toml/.json), fresh per fixture")
     args = parser.parse_args(argv)
 
     try:
-        backend = from_spec(args.model, base_url=args.base_url)
+        backend = from_spec(args.model, base_url=args.base_url,
+                           api_key_env=args.api_key_env)
     except BackendError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -73,7 +78,13 @@ def main(argv: list[str] | None = None) -> int:
         only = [f["name"] for f in discover_fixtures(only=only)
                 if f["meta"].get("difficulty", "base") == args.difficulty]
 
+    from lumen2.bucket import BoundBucket
+
+    def bucket_factory():
+        return BoundBucket.from_file(args.bucket, model=backend.name)
+    print(bucket_factory().describe(), flush=True)
     report = run_benchmark(backend, max_steps=args.max_steps,
+                           bucket_factory=bucket_factory,
                            test_timeout=args.test_timeout, memory=memory,
                            only=only,
                            progress=lambda msg: print(msg, flush=True))
