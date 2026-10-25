@@ -103,6 +103,7 @@ class BoundBucket:
         self.tokens = 0
         self.cost_usd = 0.0
         self.revisions = 0
+        self.attempt_memory_tokens = 0   # outer attempt summaries put in prompts
         self.breaches: list[dict] = []
         self.on_breach = None   # callable(record) -> None (kernel trace hook)
         self.on_event = None    # callable(event, detail)
@@ -143,7 +144,8 @@ class BoundBucket:
         return {"steps": self.steps, "model_calls": self.model_calls,
                 "tokens": self.tokens, "cost_usd": round(self.cost_usd, 5),
                 "seconds": round(self.seconds_used, 1),
-                "revisions": self.revisions, "breaches": len(self.breaches)}
+                "revisions": self.revisions,
+                "attempt_memory_tokens": self.attempt_memory_tokens, "breaches": len(self.breaches)}
 
     # -- tighten, never loosen ---------------------------------------------------
 
@@ -231,7 +233,8 @@ class BoundBucket:
     def authorize_model_call(self) -> dict | None:
         lim = self.limits
         for kind, used, cap in (("model-calls", self.model_calls, lim.max_model_calls),
-                                ("tokens", self.tokens, lim.max_tokens)):
+                                ("tokens", self.tokens + self.attempt_memory_tokens,
+                                 lim.max_tokens)):
             if used >= cap:
                 return self.breach("bucket", kind, f"{kind} cap {cap} reached")
         if self.cost_usd >= lim.max_cost_usd:
@@ -239,6 +242,14 @@ class BoundBucket:
                                f"cost cap ${lim.max_cost_usd} reached")
         self.model_calls += 1
         return None
+
+    def charge_context(self, tokens: int) -> None:
+        """Account for outer-layer context (attempt memory) in prompts.
+
+        Counted separately so the size is visible, and reserved against the
+        token cap in ``authorize_model_call`` (the provider's own usage already
+        bills the dollars, so this is not double-charged as cost)."""
+        self.attempt_memory_tokens += max(0, int(tokens))
 
     def charge(self, prompt_tokens: int, completion_tokens: int,
                paid: bool) -> None:

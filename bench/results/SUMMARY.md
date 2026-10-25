@@ -28,3 +28,17 @@ this is the case it cannot catch, and the benchmark reports it as such.
 
 v1-vs-v2 compare (`python -m lumen2.bench.compare`) was not run with a paid
 model in this round.
+
+## Outer attempt memory A/B (xai:grok-4.6, 2026-10-25)
+
+| run | fixed | wrong fixes | correct withholds | breaches | mean steps | tokens | cost |
+|---|---|---|---|---|---|---|---|
+| attempt memory ON (default) | 21/22 | 1 (inventory_pipeline) | 1/1 | 0 | 7.8 | 459,608 | $0.949 |
+| `--no-attempt-memory` | 21/22 | 1 (inventory_pipeline) | 1/1 | 0 | 7.5 | 429,165 | $0.887 |
+
+No difference in outcomes. In both runs no `finish` was rejected on any fixture.
+On inventory_pipeline the model's first fix already passed the visible tests,
+so the agent never saw a failed attempt and the memory had nothing to pass on.
+Memory only helps after a visible failure. It cannot catch a fix that is wrong
+only against the hidden tests. Small token/cost delta is within run-to-run noise
+plus the summaries on fixtures with intermediate red test runs.

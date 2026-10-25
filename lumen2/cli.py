@@ -48,6 +48,8 @@ def add_bucket_args(parser: argparse.ArgumentParser) -> None:
                         choices=("off", "auto", "docker", "podman"),
                         help="run tests in a container as the outer layer "
                              "(default: bucket setting, off)")
+    parser.add_argument("--no-attempt-memory", action="store_true",
+                        help="disable outer-layer memory of failed attempts")
     parser.add_argument("--no-inner-sandbox", action="store_true",
                         help="disable the inner sandbox layer (testing only)")
 
@@ -130,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
                          test_timeout=args.test_timeout, verbose=args.verbose,
                          bucket=build_bucket(args, backend.name),
                          inner_enabled=not args.no_inner_sandbox,
+                         attempt_memory=not args.no_attempt_memory,
                          announce=print)
         _emit(report, args.out)
         print(_fix_banner(report))

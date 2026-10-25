@@ -15,6 +15,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+from lumen2.attempts import approx_tokens
 from lumen2.actions import (Action, ALL_TOOLS, EDIT_FILE, FINISH, LIST_FILES,
                             READ_FILE, RUN_PYTHON, RUN_TESTS, SEARCH, WITHHOLD)
 from lumen2.backends import Backend
@@ -126,7 +127,13 @@ class Agent:
             failure = (kernel.last_tests.output if kernel.last_tests
                        else self._baseline_failure) or self.question
             lessons = self.memory.relevant(failure)
+        attempts = getattr(getattr(self.workspace, "sandbox", None),
+                           "attempts", None)
+        previous = attempts.summary() if attempts is not None else ""
+        if previous:
+            self.bucket.charge_context(approx_tokens(previous))
         return {
+            "previous_attempts": previous,
             "task": self.task,
             "mission": kernel.mission,
             "question": self.question,
@@ -142,6 +149,16 @@ class Agent:
             "history": self.history,
             "last_rejected": self.last_rejected,
         }
+
+    def _remember_failure(self, kind: str, what: str, why: str) -> None:
+        attempts = getattr(getattr(self.workspace, "sandbox", None),
+                           "attempts", None)
+        if attempts is not None and self.task == "fix":
+            attempts.record(kind, what, why)
+
+    def _edit_desc(self) -> str:
+        changed = sorted(self.workspace.changed_files())
+        return "edited " + (", ".join(changed) if changed else "nothing")
 
     def _record(self, action: Action, result: str) -> None:
         self.history.append({"action": action.public(), "result": result})
@@ -244,6 +261,11 @@ class Agent:
                 feedback = decision.feedback()
                 self.last_rejected = feedback
                 self._record(action, feedback)
+                if action.tool in (EDIT_FILE, FINISH):
+                    self._remember_failure(
+                        "kernel-rejected",
+                        f"{action.tool} {action.args.get('path', '')}".strip(),
+                        "; ".join(decision.issues[:2]) or feedback)
                 if decision.cheat and self.memory is not None:
                     self.memory.record(
                         "cheat-caught", self._baseline_failure,
@@ -268,6 +290,11 @@ class Agent:
             result = self._execute(action)
             tests = self._last_tests_obj
             kernel.observe(action, result, tests)
+            if (tests is not None and not tests.green
+                    and self.workspace.changed_files()):
+                self._remember_failure("tests-red", self._edit_desc(),
+                                       tests.summary() + " "
+                                       + self._fail_head(tests.output))
             progress = self._made_progress(action, result, tests)
             kernel.note_progress(progress)
             self._record(action, result)
@@ -283,6 +310,12 @@ class Agent:
         if self.memory is not None:
             self.memory.end_run()
         return outcome
+
+    @staticmethod
+    def _fail_head(output: str) -> str:
+        keep = [l for l in output.splitlines()
+                if l.startswith(("E ", "FAILED")) or "Error" in l]
+        return " | ".join(keep[:3])
 
     def _made_progress(self, action: Action, result: str, tests) -> bool:
         if action.tool == RUN_TESTS and tests is not None:
@@ -308,6 +341,8 @@ class Agent:
             if not ok:
                 kernel.tally("finish_rejected")
                 kernel.log("finish-reject", message)
+                self._remember_failure("finish-rejected", self._edit_desc(),
+                                       message)
                 feedback = (f"finish rejected: {message}. Keep working, "
                             f"or withhold if the task is impossible.")
                 self.last_rejected = feedback
@@ -363,10 +398,11 @@ def run_fix(target: str | Path, backend: Backend,
             test_timeout: float = 60.0, policy: dict | None = None,
             verbose: bool = False, bucket: BoundBucket | None = None,
             inner_enabled: bool = True, announce=None,
-            request: str = "") -> dict:
+            request: str = "", attempt_memory: bool = True) -> dict:
     bucket = bucket or BoundBucket(model=backend.name)
     with Workspace(Path(target), test_timeout=test_timeout, bucket=bucket,
-                   inner_enabled=inner_enabled) as ws:
+                   inner_enabled=inner_enabled,
+                   attempt_memory=attempt_memory) as ws:
         if announce:
             announce(bucket.describe())
             announce(ws.sandbox.describe())
