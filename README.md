@@ -8,6 +8,28 @@ coding agent where every step passes through a kernel that enforces goals,
 evidence, adversarial critique, verification, and honest refusal. The pitch is
 backed by a benchmark with hidden held-out tests, not by adjectives.
 
+## Thesis
+
+In the words of the project's owner, Joshua Almeida (fitzyracing1):
+
+> In terms of a computer program, superintelligence is a bound bucket using
+> AI to drive an attack bot that derives its info from an LLM.
+
+Put plainly: an **LLM supplies ideas** — candidate edits, answers, next
+steps. An **AI-driven attack bot tries to break each one** before it is
+allowed to matter — cheat detection, adversarial critique, verification
+against tests the proposer never sees. And a **bound bucket contains it
+all** — hard limits on goals, budget, and what the system may touch — so
+only what survives the attack acts on the world.
+
+The claim is not that Lumen 2 is superintelligent. The claim is that this
+shape — bounded, adversarial, verified — is the architecture any path to
+*safe* superintelligence will need, regardless of how strong the substrate
+gets. Lumen 2 is a working instance of that shape at small scale, and the
+benchmark in this repository is how progress against the claim is measured.
+See [DEFINITION.md](DEFINITION.md) for the full mapping from the thesis to
+the code.
+
 ## What the kernel enforces
 
 A plain agent loop does whatever the model says next. In Lumen 2 the model
