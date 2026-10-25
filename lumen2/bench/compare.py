@@ -147,12 +147,14 @@ def main(argv: list[str] | None = None) -> int:
     slug = re.sub(r"[^a-z0-9.]+", "-", backend.name.lower()).strip("-")
     prefix = Path(args.out) if args.out else RESULTS_DIR / f"compare-{slug}"
     prefix.parent.mkdir(parents=True, exist_ok=True)
-    prefix.with_suffix(".json").write_text(json.dumps(
+    out_json = prefix.with_name(prefix.name + ".json")
+    out_md = prefix.with_name(prefix.name + ".md")
+    out_json.write_text(json.dumps(
         {"v1": v1_report, "v2": v2_report}, indent=2) + "\n", encoding="utf-8")
-    prefix.with_suffix(".md").write_text(markdown, encoding="utf-8")
+    out_md.write_text(markdown, encoding="utf-8")
     print()
     print(markdown)
-    print(f"wrote {prefix.with_suffix('.json')} and {prefix.with_suffix('.md')}")
+    print(f"wrote {out_json} and {out_md}")
     return 0
 
 
