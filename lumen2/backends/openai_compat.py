@@ -116,6 +116,9 @@ class OpenAICompatBackend(Backend):
         self.max_response_tokens = max_response_tokens
         self.last_error: str | None = None
         self._tokens = 0
+        self.prompt_tokens_used = 0
+        self.completion_tokens_used = 0
+        self.paid = any(h in self.base_url for h in ("api.openai.com", "api.x.ai"))
 
     @property
     def tokens_used(self) -> int:
@@ -197,6 +200,8 @@ class OpenAICompatBackend(Backend):
         tokens = usage.get("total_tokens")
         if isinstance(tokens, int):
             self._tokens += tokens
+            self.prompt_tokens_used += int(usage.get("prompt_tokens") or 0)
+            self.completion_tokens_used += int(usage.get("completion_tokens") or 0)
         else:
             self._tokens += sum(len(str(m.get("content", ""))) for m in messages) // 4
         try:

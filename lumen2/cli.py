@@ -27,7 +27,9 @@ def _utf8_console() -> None:
 def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model", default=None,
                         help="stub (default) | ollama:<model> | amalia | "
-                             "openai:<model> | url:<base_url>::<model>")
+                             "openai:<model> | xai:<model> | url:<base_url>::<model>")
+    parser.add_argument("--api-key-env", default=None, metavar="NAME",
+                        help="read the API key from this env var (never printed)")
     parser.add_argument("--base-url", default=None,
                         help="override the backend base URL")
     parser.add_argument("--memory", default=None, metavar="PATH",
@@ -36,6 +38,24 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
                         help="write the full JSON report here")
     parser.add_argument("--verbose", action="store_true",
                         help="print each step as it happens")
+    add_bucket_args(parser)
+
+
+def add_bucket_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--bucket", default=None, metavar="FILE",
+                        help="BoundBucket limits override (.toml or .json)")
+    parser.add_argument("--container", default=None,
+                        choices=("off", "auto", "docker", "podman"),
+                        help="run tests in a container as the outer layer "
+                             "(default: bucket setting, off)")
+    parser.add_argument("--no-inner-sandbox", action="store_true",
+                        help="disable the inner sandbox layer (testing only)")
+
+
+def build_bucket(args, model_name: str):
+    from lumen2.bucket import BoundBucket
+    return BoundBucket.from_file(args.bucket, model=model_name,
+                                 container=args.container)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,7 +108,8 @@ def main(argv: list[str] | None = None) -> int:
     from lumen2.memory import Memory
 
     try:
-        backend = from_spec(args.model, base_url=args.base_url)
+        backend = from_spec(args.model, base_url=args.base_url,
+                           api_key_env=args.api_key_env)
     except BackendError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -97,20 +118,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "fix":
         report = run_fix(args.target, backend, memory=memory,
                          max_steps=args.max_steps,
-                         test_timeout=args.test_timeout, verbose=args.verbose)
+                         test_timeout=args.test_timeout, verbose=args.verbose,
+                         bucket=build_bucket(args, backend.name),
+                         inner_enabled=not args.no_inner_sandbox,
+                         announce=print)
         _emit(report, args.out)
         print(_fix_banner(report))
         return 0 if report["outcome"] == "committed" else 1
 
     if args.command == "ask":
         report = run_ask(args.question, backend, memory=memory,
-                         max_steps=args.max_steps, verbose=args.verbose)
+                         max_steps=args.max_steps, verbose=args.verbose,
+                         bucket=build_bucket(args, backend.name),
+                         inner_enabled=not args.no_inner_sandbox,
+                         announce=print)
         _emit(report, args.out)
         print(_ask_banner(report))
         return 0
 
     if args.command == "chat":
         print("lumen2 chat — ask anything; blank line or 'exit' quits.")
+        announce = print
         while True:
             try:
                 question = input("you> ").strip()
@@ -120,7 +148,11 @@ def main(argv: list[str] | None = None) -> int:
             if not question or question.lower() in ("exit", "quit"):
                 return 0
             report = run_ask(question, backend, memory=memory,
-                             max_steps=args.max_steps, verbose=args.verbose)
+                             max_steps=args.max_steps, verbose=args.verbose,
+                             bucket=build_bucket(args, backend.name),
+                             inner_enabled=not args.no_inner_sandbox,
+                             announce=announce)
+            announce = None   # print the limits once per chat session
             print(_ask_banner(report))
     return 2
 
@@ -136,6 +168,7 @@ def _fix_banner(report: dict) -> str:
     kernel = report.get("kernel", {})
     stats = kernel.get("stats", {})
     cheats = sum(v for k, v in stats.items() if k.startswith("cheat:"))
+    breaches = stats.get("bucket_breaches", 0)
     if report["outcome"] == "committed":
         head = (f"FIXED: {report.get('verification', '')} — changed "
                 f"{', '.join(report.get('files_changed', []))}")
@@ -143,6 +176,7 @@ def _fix_banner(report: dict) -> str:
         head = f"WITHHELD: {report.get('reason', '')}"
     return (f"{head}\n(steps={report['steps']} tokens={report['tokens']} "
             f"time={report['seconds']}s cheats_caught={cheats} "
+            f"bucket_breaches={breaches} "
             f"backend={report['backend']})")
 
 

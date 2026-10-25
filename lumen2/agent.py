@@ -18,6 +18,7 @@ from pathlib import Path
 from lumen2.actions import (Action, ALL_TOOLS, EDIT_FILE, FINISH, LIST_FILES,
                             READ_FILE, RUN_PYTHON, RUN_TESTS, SEARCH, WITHHOLD)
 from lumen2.backends import Backend
+from lumen2.bucket import BoundBucket
 from lumen2.kernel import Kernel
 from lumen2.memory import Memory
 from lumen2.workspace import Workspace
@@ -33,7 +34,7 @@ class Agent:
     def __init__(self, backend: Backend, workspace: Workspace,
                  task: str = "fix", question: str = "",
                  memory: Memory | None = None, policy: dict | None = None,
-                 verbose: bool = False):
+                 verbose: bool = False, bucket: BoundBucket | None = None):
         self.backend = backend
         self.workspace = workspace
         self.task = task
@@ -45,6 +46,25 @@ class Agent:
                         f"{workspace.target.name if workspace.target else 'the workspace'}")
         self.kernel = Kernel(mission, workspace, policy=policy,
                              model_critic=self._model_critic)
+        # The bound bucket: hard limits around everything below.
+        self.bucket = (bucket or getattr(workspace, "bucket", None)
+                       or BoundBucket(model=backend.name))
+        if self.bucket.model == "stub":
+            self.bucket.model = backend.name
+        if not self.bucket.allowed_roots:
+            self.bucket.confine_to(workspace.root)
+        sandbox = getattr(workspace, "sandbox", None)
+        if getattr(workspace, "bucket", None) is None:
+            workspace.bucket = self.bucket
+        if sandbox is not None and sandbox.bucket is None:
+            sandbox.bucket = self.bucket
+            sandbox.inner.bucket = self.bucket
+        self.kernel.bucket = self.bucket
+        self.bucket.on_breach = self._on_breach
+        self.bucket.on_event = self.kernel.log
+        for old in self.bucket.breaches:   # breaches before the agent existed
+            self._on_breach(old)
+        self._charged = (0, 0, 0)
         if task == "fix":
             self.kernel.believe("fixable", "the failing tests can be fixed "
                                            "by editing the source", 0.6)
@@ -64,8 +84,31 @@ class Agent:
 
     # -- plumbing -----------------------------------------------------------------
 
+    def _on_breach(self, record: dict) -> None:
+        self.kernel.tally("bucket_breaches")
+        self.kernel.log("bucket-breach", f"[{record['layer']}] "
+                                         f"{record['kind']}: {record['detail']}")
+
+    def _charge(self) -> None:
+        """Bill the bucket for whatever the backend spent since last time."""
+        b = self.backend
+        total = b.tokens_used
+        prompt = getattr(b, "prompt_tokens_used", 0)
+        completion = getattr(b, "completion_tokens_used", 0)
+        t0, p0, c0 = self._charged
+        dp, dc = prompt - p0, completion - c0
+        if dp + dc < total - t0:   # backend without a usage split
+            dp += (total - t0) - (dp + dc)
+        self.bucket.charge(dp, dc, paid=bool(getattr(b, "paid", False)))
+        self._charged = (total, prompt, completion)
+
     def _model_critic(self, proposal: dict) -> dict | None:
-        return self.backend.critique(proposal, self._context())
+        if self.bucket.authorize_model_call():
+            return None   # over budget: critic is advisory, verification stands
+        try:
+            return self.backend.critique(proposal, self._context())
+        finally:
+            self._charge()
 
     def _say(self, text: str) -> None:
         if self.verbose:
@@ -135,6 +178,11 @@ class Agent:
         started = time.monotonic()
 
         while outcome is None:
+            breach = self.bucket.take_step()
+            if breach:
+                kernel.log("withhold", f"bucket: {breach['detail']}")
+                outcome = self._withheld(f"bucket breach: {breach['detail']}")
+                break
             reason = kernel.budget_exceeded()
             if reason:
                 kernel.log("withhold", reason)
@@ -142,8 +190,13 @@ class Agent:
                 break
             kernel.maybe_revise_policy()
             kernel.step += 1
+            breach = self.bucket.authorize_model_call()
+            if breach:
+                outcome = self._withheld(f"bucket breach: {breach['detail']}")
+                break
             action = self.backend.next_action(
                 self._context(), tools, kernel.policy["temperature"])
+            self._charge()
             kernel.tokens_used = max(kernel.tokens_used,
                                      self.backend.tokens_used)
             if action is None:
@@ -162,6 +215,23 @@ class Agent:
             invalid_streak = 0
             self._say(f"step {kernel.step}: {action.tool} "
                       f"{action.args.get('path', action.args.get('pattern', ''))}")
+
+            breach = self.bucket.check_action(action.tool, action.args)
+            if breach:
+                feedback = (f"BLOCKED by the bound bucket ({breach['kind']}): "
+                            f"{breach['detail']}")
+                self.last_rejected = feedback
+                self._record(action, feedback)
+                if action.tool == EDIT_FILE and breach["kind"] in (
+                        "read-only", "path-outside"):
+                    # Let the attack bot classify it too (cheat accounting);
+                    # the action stays blocked either way.
+                    kernel.gate(action)
+                kernel.note_progress(False)
+                if breach["kind"] == "confidence-floor":
+                    outcome = self._withheld(
+                        f"confidence below the bucket floor: {breach['detail']}")
+                continue
 
             decision = kernel.gate(action)
             if not decision.allowed:
@@ -285,10 +355,16 @@ class Agent:
 def run_fix(target: str | Path, backend: Backend,
             memory: Memory | None = None, max_steps: int = 30,
             test_timeout: float = 60.0, policy: dict | None = None,
-            verbose: bool = False) -> dict:
-    with Workspace(Path(target), test_timeout=test_timeout) as ws:
+            verbose: bool = False, bucket: BoundBucket | None = None,
+            inner_enabled: bool = True, announce=None) -> dict:
+    bucket = bucket or BoundBucket(model=backend.name)
+    with Workspace(Path(target), test_timeout=test_timeout, bucket=bucket,
+                   inner_enabled=inner_enabled) as ws:
+        if announce:
+            announce(bucket.describe())
+            announce(ws.sandbox.describe())
         agent = Agent(backend, ws, task="fix", memory=memory,
-                      policy=policy, verbose=verbose)
+                      policy=policy, verbose=verbose, bucket=bucket)
         report = agent.run(max_steps=max_steps)
     report["target"] = str(target)
     return report
@@ -296,10 +372,16 @@ def run_fix(target: str | Path, backend: Backend,
 
 def run_ask(question: str, backend: Backend, memory: Memory | None = None,
             max_steps: int = 10, policy: dict | None = None,
-            verbose: bool = False) -> dict:
-    with Workspace(None) as ws:
+            verbose: bool = False, bucket: BoundBucket | None = None,
+            inner_enabled: bool = True, announce=None) -> dict:
+    bucket = bucket or BoundBucket(model=backend.name)
+    with Workspace(None, bucket=bucket, inner_enabled=inner_enabled) as ws:
+        if announce:
+            announce(bucket.describe())
+            announce(ws.sandbox.describe())
         agent = Agent(backend, ws, task="ask", question=question,
-                      memory=memory, policy=policy, verbose=verbose)
+                      memory=memory, policy=policy, verbose=verbose,
+                      bucket=bucket)
         report = agent.run(max_steps=max_steps)
     report["question"] = question
     return report

@@ -91,6 +91,7 @@ class Kernel:
             self.policy.update(policy)
         self.model_critic = model_critic  # callable(proposal: dict) -> dict | None
         self.lessons = lessons or []
+        self.bucket = None  # set by the Agent; checked on policy revision
         self.goals: list[Goal] = [Goal(mission)]
         self.beliefs: dict[str, Belief] = {}
         self.step = 0
@@ -283,6 +284,8 @@ class Kernel:
             return False
         if self.revisions_used >= self.policy["revision_budget"]:
             return False
+        if self.bucket is not None and self.bucket.authorize_revision():
+            return False  # the bucket said no; breach already recorded
         proposal = dict(self.policy)
         proposal["temperature"] = min(POLICY_CLAMPS["temperature"][1],
                                       self.policy["temperature"] + 0.25)
@@ -318,4 +321,7 @@ class Kernel:
             "policy": dict(self.policy),
             "stats": dict(self.stats),
             "revisions_used": self.revisions_used,
+            "bucket": self.bucket.usage() if self.bucket is not None else None,
+            "bucket_breaches": (list(self.bucket.breaches)
+                                if self.bucket is not None else []),
         }
