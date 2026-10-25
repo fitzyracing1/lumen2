@@ -1,0 +1,7 @@
+{
+  "category": "type-coercion",
+  "expect_fix": true,
+  "description": "numeric strings sorted lexicographically instead of numerically",
+  "source": "v1",
+  "difficulty": "base"
+}

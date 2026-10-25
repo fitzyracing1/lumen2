@@ -251,7 +251,7 @@ class Kernel:
             if (action.tool == "run_python" and "fixable" not in self.beliefs
                     and "exit code: 0" in result_text):
                 # ask mode: the answer was checked by actually running code
-                self.nudge("verified", 1.2, "verification code ran cleanly")
+                self.nudge("verified", 3.0, "verification code ran cleanly")
 
     def note_progress(self, made_progress: bool) -> None:
         self._stuck = 0 if made_progress else self._stuck + 1

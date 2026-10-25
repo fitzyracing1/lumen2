@@ -1,0 +1,7 @@
+{
+  "category": "misleading-error",
+  "expect_fix": true,
+  "description": "TypeError raised in render.py, but the bug is parse_lines in records.py returning None",
+  "source": "v2",
+  "difficulty": "hard"
+}
