@@ -2,7 +2,7 @@
 
     lumen2 fix <dir>        fix the failing tests in a directory
     lumen2 ask "question"   answer one question with verified confidence
-    lumen2 chat             interactive ask loop
+    lumen2 chat             interactive chat (default xai:grok-4.6)
     lumen2 bench ...        run the bug benchmark (see lumen2 bench --help)
 
 Model selection: --model or LUMEN2_MODEL. Default is the offline stub.
@@ -77,8 +77,14 @@ def main(argv: list[str] | None = None) -> int:
     p_ask.add_argument("--max-steps", type=int, default=10)
     _add_common(p_ask)
 
-    p_chat = sub.add_parser("chat", help="interactive ask loop")
-    p_chat.add_argument("--max-steps", type=int, default=10)
+    p_chat = sub.add_parser("chat", help="interactive chat (default model "
+                                         "xai:grok-4.6)")
+    p_chat.add_argument("--project", default=None, metavar="DIR",
+                        help="directory chat may change (via the fixer)")
+    p_chat.add_argument("--max-steps", type=int, default=10,
+                        help="steps per question")
+    p_chat.add_argument("--max-fix-steps", type=int, default=30,
+                        help="steps per code-change turn")
     _add_common(p_chat)
 
     p_forget = sub.add_parser("forget", help="wipe a memory store")
@@ -107,6 +113,9 @@ def main(argv: list[str] | None = None) -> int:
     from lumen2.backends import BackendError, from_spec
     from lumen2.memory import Memory
 
+    if args.command == "chat" and not args.model:
+        import os
+        args.model = os.environ.get("LUMEN2_MODEL") or "xai:grok-4.6"
     try:
         backend = from_spec(args.model, base_url=args.base_url,
                            api_key_env=args.api_key_env)
@@ -137,23 +146,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "chat":
-        print("lumen2 chat — ask anything; blank line or 'exit' quits.")
-        announce = print
-        while True:
-            try:
-                question = input("you> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                return 0
-            if not question or question.lower() in ("exit", "quit"):
-                return 0
-            report = run_ask(question, backend, memory=memory,
-                             max_steps=args.max_steps, verbose=args.verbose,
-                             bucket=build_bucket(args, backend.name),
-                             inner_enabled=not args.no_inner_sandbox,
-                             announce=announce)
-            announce = None   # print the limits once per chat session
-            print(_ask_banner(report))
+        from lumen2.chat import ChatSession, chat_loop
+        session = ChatSession(
+            backend, project=args.project,
+            bucket_factory=lambda: build_bucket(args, backend.name),
+            memory=memory, max_steps_ask=args.max_steps,
+            max_steps_fix=args.max_fix_steps,
+            inner_enabled=not args.no_inner_sandbox, verbose=args.verbose)
+        return chat_loop(session)
     return 2
 
 

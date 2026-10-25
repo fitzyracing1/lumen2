@@ -148,6 +148,33 @@ Any backend can read its key from a named environment variable with
 `--api-key-env NAME`; keys are never printed, logged, or passed to sandboxed
 code.
 
+### Chat
+
+`python -m lumen2 chat` is an interactive session (default model
+`xai:grok-4.6`, key from `XAI_API_KEY`). Questions go through the ask kernel
+(checked by running code where possible; low confidence becomes "I don't
+know"). A message that asks for a code change (`fix ...`, `change ...`,
+`refactor ...`, or `/fix <request>`) runs the normal fixer on the `--project`
+directory: scratch copy, BoundBucket, nested sandbox, critic, fresh test
+verification, and only a verified diff is written back. Tests stay
+read-only, so "change the test so it passes" is blocked like anywhere else.
+The whole session shares one bucket budget: each turn's bucket is the
+configured one tightened to what the session has left, and once it is spent
+chat refuses new turns. `/budget` shows spend, `/help` lists commands, blank
+line or `exit` quits.
+
+```powershell
+# Windows PowerShell
+$env:XAI_API_KEY = "xai-..."
+python -m lumen2 chat --project C:\code\myproject
+python -m lumen2 chat --project . --bucket examples\bucket.toml   # tighter limits
+python -m lumen2 chat --model stub --project .                    # offline
+```
+
+Chat's code changes are limited to what the fixer does: make the project's
+failing tests pass. It is not a general code-writing assistant; with no
+failing tests there is nothing for it to verify, and it withholds.
+
 ### Using Grok
 
 ```powershell

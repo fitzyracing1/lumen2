@@ -362,14 +362,16 @@ def run_fix(target: str | Path, backend: Backend,
             memory: Memory | None = None, max_steps: int = 30,
             test_timeout: float = 60.0, policy: dict | None = None,
             verbose: bool = False, bucket: BoundBucket | None = None,
-            inner_enabled: bool = True, announce=None) -> dict:
+            inner_enabled: bool = True, announce=None,
+            request: str = "") -> dict:
     bucket = bucket or BoundBucket(model=backend.name)
     with Workspace(Path(target), test_timeout=test_timeout, bucket=bucket,
                    inner_enabled=inner_enabled) as ws:
         if announce:
             announce(bucket.describe())
             announce(ws.sandbox.describe())
-        agent = Agent(backend, ws, task="fix", memory=memory,
+        agent = Agent(backend, ws, task="fix", question=request,
+                      memory=memory,
                       policy=policy, verbose=verbose, bucket=bucket)
         report = agent.run(max_steps=max_steps)
     report["target"] = str(target)
