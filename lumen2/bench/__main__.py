@@ -96,12 +96,12 @@ def main(argv: list[str] | None = None) -> int:
         prefix = RESULTS_DIR / (slug + ("-mem" if memory else ""))
     prefix.parent.mkdir(parents=True, exist_ok=True)
     markdown = format_markdown(report)
-    prefix.with_suffix(".json").write_text(
+    prefix.with_name(prefix.name + ".json").write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    prefix.with_suffix(".md").write_text(markdown, encoding="utf-8")
+    prefix.with_name(prefix.name + ".md").write_text(markdown, encoding="utf-8")
     print()
     print(markdown)
-    print(f"wrote {prefix.with_suffix('.json')} and {prefix.with_suffix('.md')}")
+    print(f"wrote {prefix.with_name(prefix.name + '.json')} and {prefix.with_name(prefix.name + '.md')}")
     return 0
 
 

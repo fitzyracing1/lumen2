@@ -137,3 +137,25 @@ def test_model_call_limit(fixture_copy):
     report = run_fix(target, backend, bucket=BoundBucket(Limits(max_model_calls=2)))
     assert report["outcome"] == "withheld"
     assert any(b["kind"] == "model-calls" for b in _breaches(report))
+
+
+def test_reused_backend_spend_is_per_run(tmp_path):
+    """A backend reused across runs (as the benchmark does) must not carry
+    earlier runs' tokens or cost into the next run's budgets."""
+    import shutil
+    from pathlib import Path
+    from lumen2.agent import run_fix
+    from lumen2.backends.stub import StubBackend
+    fx = Path(__file__).resolve().parents[1] / "bench" / "fixtures" / "off_by_one"
+    target = tmp_path / "t"
+    shutil.copytree(fx / "target", target)
+    class Reused(StubBackend):
+        @property
+        def tokens_used(self):            # pretend earlier runs spent a lot
+            return 10_000_000 + super().tokens_used
+    backend = Reused()
+    b = BoundBucket(model="stub")
+    report = run_fix(str(target), backend=backend, bucket=b)
+    assert report["outcome"] == "committed", report.get("reason")
+    assert report["kernel"]["tokens_used"] < 1_000_000
+    assert b.usage()["tokens"] < 1_000_000

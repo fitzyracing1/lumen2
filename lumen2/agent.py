@@ -64,7 +64,12 @@ class Agent:
         self.bucket.on_event = self.kernel.log
         for old in self.bucket.breaches:   # breaches before the agent existed
             self._on_breach(old)
-        self._charged = (0, 0, 0)
+        # start from the backend's current counters: a backend may be reused
+        # across runs (the benchmark does), and only this run's spend counts
+        self._tokens_base = backend.tokens_used
+        self._charged = (backend.tokens_used,
+                         getattr(backend, "prompt_tokens_used", 0),
+                         getattr(backend, "completion_tokens_used", 0))
         if task == "fix":
             self.kernel.believe("fixable", "the failing tests can be fixed "
                                            "by editing the source", 0.6)
@@ -197,8 +202,9 @@ class Agent:
             action = self.backend.next_action(
                 self._context(), tools, kernel.policy["temperature"])
             self._charge()
-            kernel.tokens_used = max(kernel.tokens_used,
-                                     self.backend.tokens_used)
+            kernel.tokens_used = max(
+                kernel.tokens_used,
+                self.backend.tokens_used - self._tokens_base)
             if action is None:
                 invalid_streak += 1
                 kernel.tally("invalid_actions")
