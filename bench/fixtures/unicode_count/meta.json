@@ -1,0 +1,7 @@
+{
+  "category": "string-unicode",
+  "expect_fix": true,
+  "description": "char_count counts UTF-8 bytes, not characters",
+  "source": "v1",
+  "difficulty": "base"
+}

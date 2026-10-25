@@ -1,0 +1,7 @@
+{
+  "category": "mutable-default",
+  "expect_fix": true,
+  "description": "add_tag accumulates state via a mutable default argument",
+  "source": "v1",
+  "difficulty": "base"
+}

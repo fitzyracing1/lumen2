@@ -1,0 +1,7 @@
+{
+  "category": "multi-file-pipeline",
+  "expect_fix": true,
+  "description": "percent discount treated as a fraction; the bug is two imports away from the failing test",
+  "source": "v2",
+  "difficulty": "hard"
+}

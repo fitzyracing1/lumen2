@@ -1,0 +1,7 @@
+{
+  "category": "stale-cache",
+  "expect_fix": true,
+  "description": "a module-level cache ignores the sep argument, so the second call returns a stale result",
+  "source": "v2",
+  "difficulty": "hard"
+}

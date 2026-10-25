@@ -1,0 +1,7 @@
+{
+  "category": "two-bugs",
+  "expect_fix": true,
+  "description": "an off-by-one slice in paging.py AND a missing ceil in book.py; fixing one still leaves tests red",
+  "source": "v2",
+  "difficulty": "hard"
+}

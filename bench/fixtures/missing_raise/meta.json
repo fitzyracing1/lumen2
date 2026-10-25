@@ -1,0 +1,7 @@
+{
+  "category": "exceptions",
+  "expect_fix": true,
+  "description": "set_age should raise ValueError for negative ages",
+  "source": "v1",
+  "difficulty": "base"
+}

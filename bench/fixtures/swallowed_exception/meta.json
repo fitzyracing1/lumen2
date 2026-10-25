@@ -1,0 +1,7 @@
+{
+  "category": "swallowed-exception",
+  "expect_fix": true,
+  "description": "parse() uses the wrong delimiter and raises, but load() swallows the exception and silently returns defaults",
+  "source": "v2",
+  "difficulty": "hard"
+}

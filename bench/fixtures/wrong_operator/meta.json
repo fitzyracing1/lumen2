@@ -1,0 +1,7 @@
+{
+  "category": "wrong-operator",
+  "expect_fix": true,
+  "description": "apply_discount adds instead of subtracting",
+  "source": "v1",
+  "difficulty": "base"
+}

@@ -1,0 +1,7 @@
+{
+  "category": "wrong-helper",
+  "expect_fix": true,
+  "description": "format_price calls _round_down; the correct helper _round_half_up sits right next to it",
+  "source": "v2",
+  "difficulty": "hard"
+}

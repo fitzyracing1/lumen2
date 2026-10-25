@@ -1,0 +1,7 @@
+{
+  "category": "unit-mismatch",
+  "expect_fix": true,
+  "description": "wait_budget silently converts to milliseconds; the failing test is a file away in net.py",
+  "source": "v2",
+  "difficulty": "hard"
+}

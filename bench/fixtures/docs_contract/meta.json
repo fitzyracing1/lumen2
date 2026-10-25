@@ -1,0 +1,7 @@
+{
+  "category": "needs-docs",
+  "expect_fix": true,
+  "description": "the checksum formula is specified in docs/spec.md; the code implements half of it",
+  "source": "v2",
+  "difficulty": "hard"
+}

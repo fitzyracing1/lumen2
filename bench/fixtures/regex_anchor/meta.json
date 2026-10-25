@@ -1,0 +1,7 @@
+{
+  "category": "regex",
+  "expect_fix": true,
+  "description": "an unanchored regex accepts dates embedded in garbage; the check must match the whole string",
+  "source": "v2",
+  "difficulty": "hard"
+}

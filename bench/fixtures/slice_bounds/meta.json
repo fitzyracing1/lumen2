@@ -1,0 +1,7 @@
+{
+  "category": "slice-bounds",
+  "expect_fix": true,
+  "description": "first_n drops the first element",
+  "source": "v1",
+  "difficulty": "base"
+}

@@ -1,0 +1,7 @@
+{
+  "category": "shared-class-state",
+  "expect_fix": true,
+  "description": "a class-level mutable attribute makes every Playlist share one song list",
+  "source": "v2",
+  "difficulty": "hard"
+}

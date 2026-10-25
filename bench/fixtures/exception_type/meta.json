@@ -1,0 +1,7 @@
+{
+  "category": "wrong-exception",
+  "expect_fix": true,
+  "description": "parse_port raises the wrong exception type and misses the range check",
+  "source": "v1",
+  "difficulty": "base"
+}
