@@ -1,0 +1,19 @@
+# Example BoundBucket override:  python -m lumen2 fix DIR --bucket examples/bucket.toml
+# Any limit omitted keeps its default. Limits can be tightened mid-run, never loosened.
+[bucket]
+max_steps = 30
+max_model_calls = 80
+max_tokens = 250000
+max_seconds = 900
+command_timeout = 60
+max_cost_usd = 0.25          # paid APIs only (OpenAI, xAI); estimated from usage
+network = false              # sandboxed code gets no network
+max_policy_revisions = 2
+max_edit_chars = 40000
+confidence_floor = 0.35      # below this, the only allowed action is withhold
+max_breaches = 3             # action-level breaches before the agent withholds
+mem_mb = 1024                # inner sandbox rlimits (Linux/macOS)
+cpu_seconds = 60
+file_size_mb = 32
+max_procs = 128
+container = "off"            # off | auto | docker | podman (image must contain pytest)

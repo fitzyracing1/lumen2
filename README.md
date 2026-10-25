@@ -55,6 +55,62 @@ only ever *proposes*; the kernel decides:
   step-back hint) — at most twice per run, inside clamps, and it can never
   touch verification or the budgets themselves.
 
+## The bound bucket and the containment layers
+
+Everything above runs inside a **BoundBucket** (`lumen2/bucket.py`): declared
+hard limits that every model call, tool call, edit, executed command, and
+export must pass. Defaults, overridable with `--bucket file.toml|json` (see
+[`examples/bucket.toml`](examples/bucket.toml)); the active limits and
+sandbox layers are printed at start. A hit limit blocks the action and logs a
+`bucket-breach` in the trace (with the layer that stopped it); steps, model
+calls, tokens, cost, or wall clock running out ends the run in a withhold;
+three blocked actions also end it in a withhold. Limits can be tightened
+mid-run (`bucket.tighten(...)`) but never loosened.
+
+| limit | default |
+|---|---|
+| allowed paths / read-only paths | scratch workspace only / tests, `test_*`, `*_test.py`, `conftest.py` |
+| allowed tools | all eight agent tools |
+| max steps / model calls / tokens | 60 / 150 / 400k (the kernel's own softer budgets sit inside these) |
+| wall clock / per-command timeout | 1800 s / 120 s |
+| max cost (paid APIs: OpenAI, xAI) | $1.00 per run, estimated from reported usage |
+| network for sandboxed code | off |
+| max policy revisions / max edit size | 2 / 60,000 chars |
+| confidence floor (only `withhold` below) | 0.3 |
+
+Executed code sits in nested containment:
+
+    Bot > BoundBucket > outer sandbox > inner sandbox > executed code
+
+- **Outer sandbox:** a disposable copy of the target. Executed code may not
+  write outside it or open sockets (Python audit-hook guard). After every run
+  the real target is checked and any out-of-band change is reverted and
+  logged. Only a diff that passed verification and the critic leaves, and
+  each file is re-checked against the bucket on export. Optionally
+  `--container auto|docker|podman` runs test runs in a container with
+  `--network none`, a read-only root, and CPU/memory/pids limits (the image,
+  default `python:3.12-slim`, must contain pytest); it falls back cleanly to
+  processes when no runtime is available.
+- **Inner sandbox:** each code/test run gets its own subprocess and its own
+  temp copy, a timeout with process-tree kill, rlimits on Linux/macOS (CPU,
+  address space, file size, process count), no process spawning, writes
+  confined to the copy, network blocked (socket guard via `sitecustomize`
+  plus a dead proxy), and API keys stripped from the environment.
+
+`tests/test_escape.py` proves each block: writing outside the workspace,
+modifying the real target, editing tests, exceeding steps/cost/model calls,
+network access, spawning processes, runaway loops — and the same writes and
+network calls with the inner layer **disabled**, showing the outer layer
+still holds on its own.
+
+**Threat model, honestly:** these are process sandboxes. They stop a model
+that is wrong or sloppy, and naive escape attempts. They are *not* a
+security boundary against a determined attacker: native code can bypass
+Python audit hooks, and on Windows there are no rlimits or Job Objects yet
+(only timeouts and `taskkill /T`). Containers are materially stronger; use
+`--container` or a throwaway VM for untrusted code. See
+[DEFINITION.md](DEFINITION.md#threat-model-honest).
+
 The agent works in a throwaway copy of the target directory. Its tools:
 `read_file`, `list_files`, `search`, `run_tests`, `run_python` (sandboxed,
 with timeouts), `edit_file` (gated by the critic), `finish`, `withhold`.
@@ -85,7 +141,28 @@ identically — same gate, same verification, same budgets.
 | `ollama:<model>` | Local Ollama (e.g. `ollama:qwen2.5-coder:1.5b`) at `http://127.0.0.1:11434/v1` (`OLLAMA_BASE_URL` to override). Uses a JSON action protocol — small local models mangle native tool calls more often than JSON. |
 | `amalia` | Amália via Ollama: model `amalia:latest` at `http://127.0.0.1:11434/v1` (`AMALIA_BASE_URL`, `AMALIA_MODEL` to override). |
 | `openai:<model>` | OpenAI (needs `OPENAI_API_KEY`; `OPENAI_BASE_URL` to override). Native tool calling, with automatic downgrade to the JSON protocol if the server rejects it. |
-| `url:<base_url>::<model>` | Any other OpenAI-compatible endpoint. |
+| `xai:<model>` | xAI Grok (needs `XAI_API_KEY`; `https://api.x.ai/v1`, `XAI_BASE_URL` to override), e.g. `xai:grok-4.6` or `xai:grok-4.20-0309-non-reasoning`. Native tool calling. |
+| `url:<base_url>::<model>` | Any other OpenAI-compatible endpoint (key from `LUMEN2_API_KEY`). |
+
+Any backend can read its key from a named environment variable with
+`--api-key-env NAME`; keys are never printed, logged, or passed to sandboxed
+code.
+
+### Using Grok
+
+```powershell
+# PowerShell
+$env:XAI_API_KEY = "xai-..."
+python -m lumen2 ask "what is 2**64?" --model xai:grok-4.6
+python -m lumen2 fix path\to\project --model xai:grok-4.6
+python -m lumen2.bench --model xai:grok-4.6
+```
+
+```bash
+# bash; or any variable name via --api-key-env
+export MY_GROK_KEY=xai-...
+python -m lumen2.bench --model xai:grok-4.6 --api-key-env MY_GROK_KEY
+```
 
 HTTP backends retry with exponential backoff on 429 and 5xx (v1 didn't, and
 died on rate limits). Model output that fails validation is never "repaired
@@ -116,13 +193,15 @@ tests but fails the hidden ones is reported as a wrong fix, not a success.
 python -m lumen2.bench --model stub                      # offline
 python -m lumen2.bench --model ollama:qwen2.5-coder:1.5b # local model
 python -m lumen2.bench --model openai:gpt-4.1-mini       # OpenAI
+python -m lumen2.bench --model xai:grok-4.6              # xAI Grok
+python -m lumen2.bench --model stub --bucket examples/bucket.toml
 python -m lumen2.bench ... --memory mem.json             # with lessons
 python -m lumen2.bench.compare --model ollama:qwen2.5-coder:1.5b  # v1 vs v2
 ```
 
 Reports (JSON + markdown, written to `bench/results/`) include per fixture:
 outcome, hidden-test verdict, steps, tokens, cheats caught, edits rejected,
-and time. The compare runner clones v1 and runs both kernels on the 13 shared
+bucket breaches, estimated cost, and time. The compare runner clones v1 and runs both kernels on the 13 shared
 fixtures with the same model.
 
 Committed results from real runs live in [`bench/results/`](bench/results/).

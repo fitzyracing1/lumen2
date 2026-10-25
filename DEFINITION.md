@@ -32,12 +32,46 @@ shape, measured by a benchmark rather than asserted.
 
 | Thesis part | Code | What it does |
 |---|---|---|
-| Bound bucket | `lumen2/workspace.py` | The agent works only in a throwaway scratch copy; every path is validated to stay inside it; test files are read-only; every subprocess has a hard timeout. The real target is only touched by a verified commit. |
-| Bound bucket | `lumen2/kernel.py` | Persistent goal stack; hard budgets on steps, tokens, and wall time; policy revision is allowed at most twice per run, inside clamps, and can never loosen verification or budgets. |
+| Bound bucket | `lumen2/bucket.py` (`BoundBucket`) | The first-class bucket. Declared hard limits — allowed paths (scratch workspace only), read-only paths (tests), allowed tools, max steps, max model calls/tokens, wall clock, per-command timeout, max cost for paid APIs, network off, max policy revisions, max edit size, and a confidence floor below which only `withhold` is allowed. Every model call (including the model critic), tool call, edit, executed command, and export passes through it. A hit limit blocks the action and records a `bucket-breach` (with the layer that stopped it) in the trace; hard-budget breaches end the run in a withhold. Limits can be tightened mid-run, never loosened. Defaults, or `--bucket file.toml|json`. |
+| Bound bucket | `lumen2/sandbox.py` (`OuterSandbox`, `InnerSandbox`) | Nested containment for executed code: the outer layer is the disposable scratch copy with its own write/network guard, a real-target integrity check (reverts any out-of-band change), and the only export path (verified diff, each file re-checked against the bucket). The inner layer runs every code/test run in its own subprocess and temp copy with timeouts, rlimits, tree-kill, and network/write/spawn guards. Optional Docker/Podman outer layer. |
+| Bound bucket | `lumen2/workspace.py` | Path validation (`safe_join`), test files read-only, and the tool surface the agent sees — all execution delegated to the sandbox layers. |
+| Bound bucket | `lumen2/kernel.py` | Persistent goal stack; soft budgets on steps, tokens, and wall time inside the bucket's hard ones; policy revision is allowed at most twice per run, inside clamps, asks the bucket first, and can never loosen verification or budgets. |
 | Attack bot | `lumen2/critic.py` | Deterministic attacks on every proposed edit and on the final diff: sandbox escapes, test-file edits, deleted asserts, syntax errors, and hardcoded test expectations are detected and rejected. |
 | Attack bot | `lumen2/kernel.py` (`gate`, `verify_fix`) | Every action passes a gate before it runs. `finish` is not believed: the kernel re-runs the test suite fresh and re-scans every changed file; only green and clean commits. Low confidence becomes an explicit withhold ("I don't know"), never a guess. |
 | Attack bot | `Backend.critique` (`lumen2/backends/`) | An adversarial model critique on top of the static layer. It can veto a free-form answer (where no test oracle exists); for edits it is advisory, because the tests are the stronger arbiter. |
 | LLM | `lumen2/backends/` | The idea supply: local models via Ollama, OpenAI, any OpenAI-compatible endpoint, or the deterministic offline stub. The kernel treats them all identically — the discipline does not depend on the model being strong. |
+
+## Containment layers
+
+    Bot (agent + kernel)
+      > BoundBucket            lumen2/bucket.py   declared limits, every call
+        > outer sandbox        lumen2/sandbox.py  disposable copy, export gate, integrity check, [container]
+          > inner sandbox      lumen2/sandbox.py  per-run subprocess + temp copy, rlimits, guards
+            > executed code    (tests, run_python)
+
+Each layer checks its own limits independently and logs which layer
+stopped an action (`bucket`, `outer`, `inner`). The escape tests in
+`tests/test_escape.py` disable the inner layer and show the outer layer
+still blocks the write and the network call.
+
+## Threat model (honest)
+
+What the layers are for: a model that is wrong, sloppy, or "creative" —
+editing tests, writing outside its workspace, phoning home, spinning
+forever, spending money. Against that they work, and the tests prove each
+block.
+
+What they are not: a security boundary against a determined attacker. The
+process guards are Python audit hooks plus rlimits in an ordinary user
+process. Native code (ctypes, a C extension, a pre-existing binary run some
+other way) can bypass audit hooks; rlimits do not hide the filesystem; on
+Windows there are no rlimits or Job Objects yet, only timeouts and
+`taskkill /T`. The outer integrity check reverts tampering with the real
+target after the fact, but it cannot undo writes elsewhere on disk. A
+container (`--container docker|podman`, `--network none`, read-only root,
+CPU/memory/pids limits) is materially stronger; a VM stronger still. If you
+run untrusted code from an untrusted model, use the container layer or a
+throwaway VM.
 
 ## How progress is measured
 
@@ -51,6 +85,8 @@ sees, and reports:
   architecture exists to drive this to zero.
 - **Correct withholds** — refusing to act on the impossible fixture (and on
   anything it cannot verify) instead of committing a plausible lie.
+- **Bucket breaches** — actions the bound bucket or a sandbox layer had to
+  block (a well-behaved run has zero).
 - **Cheats caught** — attempts to edit tests, delete asserts, or hardcode
   expected outputs that the attack layer stopped.
 
