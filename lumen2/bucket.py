@@ -39,6 +39,13 @@ PRICES = {
     "gpt-4.1": (2.00, 8.00),
     "gpt-4o-mini": (0.15, 0.60),
     "gpt-4o": (2.50, 10.00),
+    # xAI (docs.x.ai/developers/pricing, Oct 2026, short-context rates)
+    "grok-4.7": (2.00, 6.00),
+    "grok-4.6": (2.00, 6.00),
+    "grok-4.5": (2.00, 6.00),
+    "grok-4.3": (1.25, 2.50),
+    "grok-4.20-0309-non-reasoning": (1.25, 2.50),
+    "grok-4.20-0309-reasoning": (1.25, 2.50),
 }
 UNKNOWN_PAID_PRICE = (5.00, 15.00)
 
