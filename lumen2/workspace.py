@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 IGNORED_DIRS = ("__pycache__", ".pytest_cache", ".git", ".venv",
-                "node_modules", ".mypy_cache")
+                "node_modules", ".mypy_cache", ".lumen2-tmp")
 MAX_FILE_CHARS = 40_000
 MAX_OUTPUT_CHARS = 6_000
 MAX_SEARCH_HITS = 50
@@ -86,6 +86,20 @@ def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
     return text[:limit // 2] + "\n... [truncated] ...\n" + text[-limit // 2:]
 
 
+def parse_pytest(output: str, exit_code: int, timed_out: bool = False) -> TestResult:
+    def count(pattern: str) -> int:
+        m = re.search(pattern, output)
+        return int(m.group(1)) if m else 0
+    return TestResult(passed=count(r"(\d+) passed"),
+                      failed=count(r"(\d+) failed"),
+                      errors=count(r"(\d+) errors?"),
+                      exit_code=exit_code, output=_truncate(output),
+                      timed_out=timed_out)
+
+
+PYTEST_ARGV = ["-m", "pytest", "-q", "--tb=short", "-p", "no:cacheprovider"]
+
+
 def run_pytest(directory: Path, timeout: float) -> TestResult:
     """Run pytest in `directory` with a hard timeout. Never raises."""
     cmd = [sys.executable, "-m", "pytest", "-q", "--tb=short",
@@ -135,7 +149,8 @@ class Workspace:
     """Scratch copy of a target directory, with sandboxed tool operations."""
 
     def __init__(self, target: Path | None, test_timeout: float = 60.0,
-                 python_timeout: float = 20.0):
+                 python_timeout: float = 20.0, bucket=None,
+                 inner_enabled: bool = True):
         self._tmp = Path(tempfile.mkdtemp(prefix="lumen2-ws-"))
         self.root = self._tmp / "work"
         self.target = Path(target).resolve() if target is not None else None
@@ -151,6 +166,13 @@ class Workspace:
         # Snapshot so cheats and commits are computed against the true original.
         self.originals: dict[str, str] = {
             rel: text for rel, text in self._iter_texts()}
+        from lumen2.sandbox import InnerSandbox, OuterSandbox
+        self.bucket = bucket
+        if bucket is not None:
+            bucket.confine_to(self.root)
+        self.sandbox = OuterSandbox(self.root, self.target, bucket,
+                                    InnerSandbox(bucket, enabled=inner_enabled),
+                                    sandbox_dir=self._tmp)
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -230,29 +252,29 @@ class Workspace:
     # -- execution -------------------------------------------------------------
 
     def run_tests(self) -> TestResult:
-        return run_pytest(self.root, self.test_timeout)
+        res = self.sandbox.run([sys.executable] + PYTEST_ARGV,
+                               timeout=self.test_timeout, kind="tests")
+        output = f"{res.stdout}\n{res.stderr}".strip()
+        if res.blocks:
+            output += "\n" + "\n".join(
+                f"LUMEN2-BLOCK[{b['layer']}]: {b['detail']}" for b in res.blocks)
+        return parse_pytest(output, res.returncode, res.timed_out)
 
     def run_python(self, code: str) -> str:
         if not isinstance(code, str) or not code.strip():
             return "ERROR: empty code"
-        try:
-            proc = subprocess.run(
-                [sys.executable, "-X", "utf8", "-c", code],
-                cwd=str(self.root), capture_output=True, text=True,
-                encoding="utf-8", errors="replace",
-                timeout=self.python_timeout, env=_utf8_env())
-        except subprocess.TimeoutExpired:
+        res = self.sandbox.run([sys.executable, "-X", "utf8", "-c", code],
+                               timeout=self.python_timeout, kind="python")
+        if res.timed_out:
             return f"ERROR: timed out after {self.python_timeout}s"
-        except OSError as exc:
-            return f"ERROR: could not run python: {exc}"
-        out = proc.stdout.strip()
-        err = proc.stderr.strip()
         pieces = []
-        if out:
-            pieces.append(f"stdout:\n{out}")
-        if err:
-            pieces.append(f"stderr:\n{err}")
-        pieces.append(f"exit code: {proc.returncode}")
+        if res.stdout.strip():
+            pieces.append(f"stdout:\n{res.stdout.strip()}")
+        if res.stderr.strip():
+            pieces.append(f"stderr:\n{res.stderr.strip()}")
+        for b in res.blocks:
+            pieces.append(f"LUMEN2-BLOCK[{b['layer']}]: {b['detail']}")
+        pieces.append(f"exit code: {res.returncode}")
         return _truncate("\n".join(pieces))
 
     # -- diffing and commit ------------------------------------------------------
@@ -270,18 +292,5 @@ class Workspace:
         return changed
 
     def commit_to_target(self) -> list[str]:
-        """Copy changed files back to the real target. Returns the paths."""
-        if self.target is None:
-            return []
-        applied = []
-        for rel, content in self.changed_files().items():
-            dest = safe_join(self.target, rel)
-            if dest is None:
-                continue
-            src = safe_join(self.root, rel)
-            if src is None or not src.is_file():
-                continue  # never propagate deletions implicitly
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(content, encoding="utf-8", newline="\n")
-            applied.append(rel)
-        return applied
+        """Export the verified diff to the real target via the outer sandbox."""
+        return self.sandbox.export(self.changed_files())
