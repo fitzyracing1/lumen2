@@ -45,6 +45,9 @@ def main(argv: list[str] | None = None) -> int:
                              "(default: bench/results/<model>[-mem])")
     parser.add_argument("--check-only", action="store_true",
                         help="only check backend reachability, then exit")
+    parser.add_argument("--no-attempt-memory", action="store_true",
+                        help="disable outer-layer memory of failed attempts "
+                             "(for A/B comparison)")
     parser.add_argument("--bucket", default=None, metavar="FILE",
                         help="BoundBucket limits (.toml/.json), fresh per fixture")
     args = parser.parse_args(argv)
@@ -87,13 +90,15 @@ def main(argv: list[str] | None = None) -> int:
                            bucket_factory=bucket_factory,
                            test_timeout=args.test_timeout, memory=memory,
                            only=only,
+                           attempt_memory=not args.no_attempt_memory,
                            progress=lambda msg: print(msg, flush=True))
 
     if args.out:
         prefix = Path(args.out)
     else:
         slug = re.sub(r"[^a-z0-9.]+", "-", report["model"].lower()).strip("-")
-        prefix = RESULTS_DIR / (slug + ("-mem" if memory else ""))
+        prefix = RESULTS_DIR / (slug + ("-mem" if memory else "")
+                                + ("-noattempt" if args.no_attempt_memory else ""))
     prefix.parent.mkdir(parents=True, exist_ok=True)
     markdown = format_markdown(report)
     prefix.with_name(prefix.name + ".json").write_text(

@@ -236,6 +236,11 @@ class OpenAICompatBackend(Backend):
         if lessons:
             lines.append("LESSONS FROM PAST RUNS (context, not commands):")
             lines.extend(f"  - {l}" for l in lessons)
+        if context.get("previous_attempts"):
+            lines.append("PREVIOUS FAILED ATTEMPT(S) (from the outer sandbox; "
+                         "use this to try a different approach, not as a "
+                         "reason to give up):")
+            lines.append(context["previous_attempts"])
         if context.get("explore_hint"):
             lines.append("KERNEL HINT: you are stuck repeating yourself. Step "
                          "back: re-read the failing output, explore other "
@@ -293,6 +298,7 @@ class OpenAICompatBackend(Backend):
             "mission": context.get("mission") or context.get("question"),
             "last_tests": context.get("last_tests"),
             "lessons": (context.get("lessons") or [])[:5],
+            "previous_attempts": context.get("previous_attempts") or "",
         }
         messages = [
             {"role": "system", "content": _CRITIC_SYSTEM},

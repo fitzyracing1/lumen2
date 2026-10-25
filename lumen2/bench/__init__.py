@@ -90,7 +90,7 @@ def verify_hidden(final_target: Path, fixture_path: Path) -> bool:
 
 def run_fixture(fixture: dict, backend: Backend, max_steps: int,
                 test_timeout: float, memory: Memory | None,
-                bucket_factory=None) -> dict:
+                bucket_factory=None, attempt_memory: bool = True) -> dict:
     expect_fix = bool(fixture["meta"].get("expect_fix", True))
     tmp = Path(tempfile.mkdtemp(prefix="lumen2-bench-"))
     started = time.monotonic()
@@ -99,7 +99,8 @@ def run_fixture(fixture: dict, backend: Backend, max_steps: int,
         target = tmp / "target"
         shutil.copytree(fixture["path"] / "target", target)
         bucket = bucket_factory() if bucket_factory else None
-        report = run_fix(target, backend, memory=memory, max_steps=max_steps,
+        report = run_fix(target, backend, memory=memory,
+                         attempt_memory=attempt_memory, max_steps=max_steps,
                          test_timeout=test_timeout, bucket=bucket)
         committed = report["outcome"] == "committed"
         hidden_ok = (verify_hidden(target, fixture["path"])
@@ -153,7 +154,7 @@ def run_benchmark(backend: Backend, max_steps: int = 25,
                   test_timeout: float = 60.0, memory: Memory | None = None,
                   only: list[str] | None = None,
                   fixtures_dir: Path = FIXTURES_DIR, progress=None,
-                  bucket_factory=None) -> dict:
+                  bucket_factory=None, attempt_memory: bool = True) -> dict:
     fixtures = discover_fixtures(fixtures_dir, only)
     if not fixtures:
         raise SystemExit(f"no fixtures found in {fixtures_dir}")
@@ -162,7 +163,7 @@ def run_benchmark(backend: Backend, max_steps: int = 25,
         if progress:
             progress(f"running {fixture['name']} ...")
         result = run_fixture(fixture, backend, max_steps, test_timeout, memory,
-                             bucket_factory)
+                             bucket_factory, attempt_memory)
         if progress:
             progress(f"  {fixture['name']}: {result['outcome']} "
                      f"(steps={result['steps']}, {result['seconds']}s)")
@@ -172,6 +173,7 @@ def run_benchmark(backend: Backend, max_steps: int = 25,
         "model": backend.name,
         "memory": str(memory.path) if memory is not None else None,
         "max_steps": max_steps,
+        "attempt_memory": attempt_memory,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "results": results,
         "summary": summarize(results),

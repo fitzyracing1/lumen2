@@ -233,6 +233,26 @@ fixtures with the same model.
 
 Committed results from real runs live in [`bench/results/`](bench/results/).
 
+## Outer-layer attempt memory (second attack)
+
+Idea credited to **Joshua Almeida**. The inner sandbox is still wiped between
+runs, but the *outer* layer (`lumen2/attempts.py`, owned by `OuterSandbox`)
+keeps a tiny in-process log of failed attempts within a task: rejected
+`finish`, a red test run after an edit, a kernel-rejected edit. A concise
+summary of the most recent failure(s) is handed to the next proposal and
+critic round as `PREVIOUS FAILED ATTEMPT(S)`, so the second attack is
+informed by the first.
+
+- The code under test never sees it: it is never written to the scratch
+  copy, the inner run copies, or the environment (tested).
+- Bounded: last 2 failures, 280 chars each, 600 chars total; every time it is
+  put into a prompt its size is charged to the BoundBucket
+  (`attempt_memory_tokens`, reserved against `max_tokens`).
+- It does not touch beliefs, thresholds, or budgets (unlike Lumen 1's memory,
+  which made it withhold everything).
+- On by default; `--no-attempt-memory` (in `lumen2 fix` and `lumen2.bench`)
+  turns it off for A/B runs.
+
 ## Memory that must not suppress action
 
 v1's memory persisted belief priors and policy between runs; a bad streak made

@@ -150,7 +150,7 @@ class Workspace:
 
     def __init__(self, target: Path | None, test_timeout: float = 60.0,
                  python_timeout: float = 20.0, bucket=None,
-                 inner_enabled: bool = True):
+                 inner_enabled: bool = True, attempt_memory: bool = True):
         self._tmp = Path(tempfile.mkdtemp(prefix="lumen2-ws-"))
         self.root = self._tmp / "work"
         self.target = Path(target).resolve() if target is not None else None
@@ -172,7 +172,8 @@ class Workspace:
             bucket.confine_to(self.root)
         self.sandbox = OuterSandbox(self.root, self.target, bucket,
                                     InnerSandbox(bucket, enabled=inner_enabled),
-                                    sandbox_dir=self._tmp)
+                                    sandbox_dir=self._tmp,
+                                    attempt_memory=attempt_memory)
 
     # -- lifecycle ----------------------------------------------------------
 

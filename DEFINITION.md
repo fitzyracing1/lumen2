@@ -54,6 +54,12 @@ stopped an action (`bucket`, `outer`, `inner`). The escape tests in
 `tests/test_escape.py` disable the inner layer and show the outer layer
 still blocks the write and the network call.
 
+The outer layer also keeps a bounded memory of failed attempts
+(`lumen2/attempts.py`; idea by Joshua Almeida). Only kernel/proposer/critic
+prompts receive its summary; executed code never can, since it exists only in
+the outer process's memory. Size-capped and charged to the bucket; disable
+with `--no-attempt-memory`.
+
 ## Threat model (honest)
 
 What the layers are for: a model that is wrong, sloppy, or "creative" —

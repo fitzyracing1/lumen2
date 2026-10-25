@@ -214,7 +214,11 @@ class OuterSandbox:
 
     def __init__(self, root: Path, target: Path | None, bucket=None,
                  inner: InnerSandbox | None = None,
-                 sandbox_dir: Path | None = None):
+                 sandbox_dir: Path | None = None,
+                 attempt_memory: bool = True):
+        from lumen2.attempts import AttemptMemory
+        # Outer-only, in-process log of failed attempts; never on disk.
+        self.attempts = AttemptMemory(enabled=attempt_memory)
         self.root = Path(root).resolve()
         # The whole disposable directory (scratch copy + inner run copies).
         self.sandbox_dir = Path(sandbox_dir or self.root.parent).resolve()
