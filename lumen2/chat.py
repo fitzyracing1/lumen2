@@ -38,7 +38,8 @@ class ChatSession:
     def __init__(self, backend, project: str | Path | None = None,
                  bucket_factory=None, memory=None, max_steps_ask: int = 10,
                  max_steps_fix: int = 30, inner_enabled: bool = True,
-                 verbose: bool = False, out=print):
+                 verbose: bool = False, out=print, attacker=None):
+        self.attacker = attacker
         self.backend = backend
         self.project = Path(project).resolve() if project else None
         self.bucket_factory = bucket_factory or (
@@ -130,7 +131,8 @@ class ChatSession:
             report = run_fix(self.project, self.backend, memory=self.memory,
                              max_steps=self.max_steps_fix,
                              verbose=self.verbose, bucket=bucket,
-                             inner_enabled=self.inner_enabled, request=text)
+                             inner_enabled=self.inner_enabled, request=text,
+                             attacker=self.attacker)
             banner = _fix_banner(report)
         else:
             report = run_ask(text, self.backend, memory=self.memory,

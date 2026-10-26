@@ -90,7 +90,8 @@ def verify_hidden(final_target: Path, fixture_path: Path) -> bool:
 
 def run_fixture(fixture: dict, backend: Backend, max_steps: int,
                 test_timeout: float, memory: Memory | None,
-                bucket_factory=None, attempt_memory: bool = True) -> dict:
+                bucket_factory=None, attempt_memory: bool = True,
+                attacker=None) -> dict:
     expect_fix = bool(fixture["meta"].get("expect_fix", True))
     tmp = Path(tempfile.mkdtemp(prefix="lumen2-bench-"))
     started = time.monotonic()
@@ -99,9 +100,26 @@ def run_fixture(fixture: dict, backend: Backend, max_steps: int,
         target = tmp / "target"
         shutil.copytree(fixture["path"] / "target", target)
         bucket = bucket_factory() if bucket_factory else None
+        if attacker is not None and hasattr(attacker, "start_task"):
+            attacker.start_task()
+        blocked_probe: list[bool] = []
+
+        def probe(changed: dict) -> None:
+            """Would the diff the attacker blocked have passed hidden tests?"""
+            ptmp = Path(tempfile.mkdtemp(prefix="lumen2-probe-"))
+            try:
+                ptarget = ptmp / "t"
+                shutil.copytree(fixture["path"] / "target", ptarget)
+                for rel, text in changed.items():
+                    (ptarget / rel).parent.mkdir(parents=True, exist_ok=True)
+                    (ptarget / rel).write_text(text, encoding="utf-8")
+                blocked_probe.append(verify_hidden(ptarget, fixture["path"]))
+            finally:
+                shutil.rmtree(ptmp, ignore_errors=True)
         report = run_fix(target, backend, memory=memory,
                          attempt_memory=attempt_memory, max_steps=max_steps,
-                         test_timeout=test_timeout, bucket=bucket)
+                         test_timeout=test_timeout, bucket=bucket,
+                         attacker=attacker, on_attack_block=probe)
         committed = report["outcome"] == "committed"
         hidden_ok = (verify_hidden(target, fixture["path"])
                      if committed else None)
@@ -145,6 +163,13 @@ def run_fixture(fixture: dict, backend: Backend, max_steps: int,
         "bucket_breaches": stats.get("bucket_breaches", 0),
         "breach_layers": sorted({b["layer"] for b in
                                  report["kernel"].get("bucket_breaches", [])}),
+        "attacker_blocks": stats.get("attacker_blocked", 0),
+        # blocked diffs that would have passed visible + hidden tests
+        "attacker_wrong_blocks": sum(1 for ok in blocked_probe if ok),
+        "attacker_calls": (report["kernel"].get("bucket") or {}).get(
+            "attacker_calls", 0),
+        "attacker_tests_dropped": (report.get("attacker") or {}).get(
+            "attacker_tests_dropped", 0),
         "cost_usd": (report["kernel"].get("bucket") or {}).get("cost_usd", 0.0),
         "seconds": round(time.monotonic() - started, 1),
     }
@@ -154,7 +179,8 @@ def run_benchmark(backend: Backend, max_steps: int = 25,
                   test_timeout: float = 60.0, memory: Memory | None = None,
                   only: list[str] | None = None,
                   fixtures_dir: Path = FIXTURES_DIR, progress=None,
-                  bucket_factory=None, attempt_memory: bool = True) -> dict:
+                  bucket_factory=None, attempt_memory: bool = True,
+                  attacker=None) -> dict:
     fixtures = discover_fixtures(fixtures_dir, only)
     if not fixtures:
         raise SystemExit(f"no fixtures found in {fixtures_dir}")
@@ -163,7 +189,7 @@ def run_benchmark(backend: Backend, max_steps: int = 25,
         if progress:
             progress(f"running {fixture['name']} ...")
         result = run_fixture(fixture, backend, max_steps, test_timeout, memory,
-                             bucket_factory, attempt_memory)
+                             bucket_factory, attempt_memory, attacker)
         if progress:
             progress(f"  {fixture['name']}: {result['outcome']} "
                      f"(steps={result['steps']}, {result['seconds']}s)")
@@ -174,6 +200,7 @@ def run_benchmark(backend: Backend, max_steps: int = 25,
         "memory": str(memory.path) if memory is not None else None,
         "max_steps": max_steps,
         "attempt_memory": attempt_memory,
+        "attacker": attacker.name if attacker is not None else None,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "results": results,
         "summary": summarize(results),
@@ -202,6 +229,10 @@ def summarize(results: list[dict]) -> dict:
         "correct_withholds": sum(1 for r in results
                                  if r["outcome"] == "withheld-correct"),
         "bucket_breaches": sum(r.get("bucket_breaches", 0) for r in results),
+        "attacker_blocks": sum(r.get("attacker_blocks", 0) for r in results),
+        "attacker_wrong_blocks": sum(r.get("attacker_wrong_blocks", 0)
+                                     for r in results),
+        "attacker_calls": sum(r.get("attacker_calls", 0) for r in results),
         "total_cost_usd": round(sum(r.get("cost_usd", 0.0) for r in results), 4),
         "impossible_handled": (all(r["correct"] for r in impossible)
                                if impossible else None),
@@ -220,6 +251,11 @@ def format_markdown(report: dict) -> str:
         f"- date: {report['timestamp']}",
         f"- memory: {report['memory'] or 'off (cold)'}",
         f"- max steps per fixture: {report['max_steps']}",
+        f"- attacker: {report.get('attacker') or 'off'}"
+        + (f" (blocks: {s.get('attacker_blocks', 0)}, of which would have "
+           f"passed hidden tests: {s.get('attacker_wrong_blocks', 0)}, "
+           f"attacker+judge calls: {s.get('attacker_calls', 0)})"
+           if report.get('attacker') else ""),
         "",
         f"**Fixed {s['fixed']}/{s['fixable']} fixable bugs** "
         f"(base: {s['fixed_base']}/{s['fixable_base']}, "
@@ -234,8 +270,9 @@ def format_markdown(report: dict) -> str:
         f"tokens: {s['total_tokens']} · wall time: {s['total_seconds']}s",
         "",
         "| fixture | difficulty | outcome | steps | tokens | cheats caught | "
-        "edits rejected | bucket breaches | hidden tests | seconds |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "edits rejected | bucket breaches | attacker blocks | hidden tests | "
+        "cost $ | seconds |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in report["results"]:
         hidden = ("green" if r["hidden_ok"] else "RED") \
@@ -244,7 +281,8 @@ def format_markdown(report: dict) -> str:
             f"| {r['fixture']} | {r['difficulty']} | {r['outcome']} | "
             f"{r['steps']} | {r['tokens']} | {r['cheats_caught']} | "
             f"{r['edits_rejected']} | {r.get('bucket_breaches', 0)} | "
-            f"{hidden} | {r['seconds']} |")
+            f"{r.get('attacker_blocks', 0)} | "
+            f"{hidden} | {round(r.get('cost_usd', 0.0), 4)} | {r['seconds']} |")
     lines += [
         "",
         "Outcomes: `fixed` = visible and hidden tests green; `wrong-fix` = "
