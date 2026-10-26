@@ -289,16 +289,28 @@ class OuterSandbox:
     # -- execution ---------------------------------------------------------------------
 
     def run(self, argv: list[str], timeout: float | None = None,
-            kind: str = "python") -> RunResult:
+            kind: str = "python", extra_files: dict | None = None,
+            source_root: Path | None = None) -> RunResult:
+        """Run argv in a fresh copy of the scratch workspace.
+
+        ``extra_files`` (rel -> text) are written ONLY into this run's
+        throwaway copy (attacker tests); they never touch ``self.root`` and so
+        can never reach the exported diff. ``source_root`` runs against a
+        different tree (e.g. the original, unpatched code)."""
         lim = self.limits
         timeout = min(timeout or lim.command_timeout, lim.command_timeout)
         inner = self.inner.enabled
         tmp = Path(tempfile.mkdtemp(prefix="inner-", dir=str(self.sandbox_dir)))
+        copied = inner or bool(extra_files) or source_root is not None
         try:
-            if inner:
+            if copied:
                 cwd = tmp / "run"
-                shutil.copytree(self.root, cwd,
+                shutil.copytree(source_root or self.root, cwd,
                                 ignore=shutil.ignore_patterns(*IGNORED))
+                for rel, text in (extra_files or {}).items():
+                    dest = cwd / rel
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_text(text, encoding="utf-8")
             else:
                 cwd = self.root
             site = tmp / "site"
@@ -355,7 +367,7 @@ class OuterSandbox:
                             f"command timed out after {timeout}s (tree killed)")
             return result
         finally:
-            if inner:
+            if copied:
                 shutil.rmtree(tmp, ignore_errors=True)
             else:
                 shutil.rmtree(tmp, ignore_errors=True)

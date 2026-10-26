@@ -35,7 +35,8 @@ class Agent:
     def __init__(self, backend: Backend, workspace: Workspace,
                  task: str = "fix", question: str = "",
                  memory: Memory | None = None, policy: dict | None = None,
-                 verbose: bool = False, bucket: BoundBucket | None = None):
+                 verbose: bool = False, bucket: BoundBucket | None = None,
+                 attacker=None, on_attack_block=None):
         self.backend = backend
         self.workspace = workspace
         self.task = task
@@ -87,6 +88,12 @@ class Agent:
         self._read_paths: set[str] = set()
         self._baseline_failure = ""
         self._last_tests_obj = None
+        # Attacker stage: on for fix tasks unless attacker is None/False.
+        self.attack = None
+        self.on_attack_block = on_attack_block   # bench hook (hidden check)
+        if attacker and task == "fix":
+            from lumen2.attacker import AttackStage
+            self.attack = AttackStage(attacker, self.bucket, log=self.kernel.log)
 
     # -- plumbing -----------------------------------------------------------------
 
@@ -348,6 +355,11 @@ class Agent:
                 self.last_rejected = feedback
                 self._record(action, feedback)
                 return None
+            if self.attack is not None:
+                verdict = self.attack.check(self.workspace, self._task_text())
+                if verdict["blocked"]:
+                    return self._attack_blocked(action, verdict)
+                kernel.log("attack", verdict["note"])
             applied = self.workspace.commit_to_target()
             kernel.complete_goal("make the test suite pass")
             kernel.log("commit", f"applied {len(applied)} file(s): "
@@ -356,9 +368,12 @@ class Agent:
                 changed = ", ".join(sorted(self.workspace.changed_files()))
                 self.memory.record("fixed", self._baseline_failure,
                                    f"fixed by editing {changed}: {summary}"[:240])
-            return {"outcome": "committed", "summary": summary,
-                    "confidence": confidence, "files_changed": applied,
-                    "verification": message}
+            out = {"outcome": "committed", "summary": summary,
+                   "confidence": confidence, "files_changed": applied,
+                   "verification": message}
+            if self.attack is not None:
+                out["attacker"] = dict(self.attack.stats)
+            return out
         # ask task
         answer = action.args.get("answer", "") or summary
         threshold = kernel.policy["min_confidence_to_answer"]
@@ -377,6 +392,35 @@ class Agent:
                 "confidence": confidence,
                 "verified_by_execution": verified > 0.5}
 
+    def _task_text(self) -> str:
+        parts = [self.kernel.mission]
+        if self.question:
+            parts.append(f"request: {self.question}")
+        if self._baseline_failure:
+            parts.append("original failing test output:\n"
+                         + self._baseline_failure[:3000])
+        return "\n".join(parts)
+
+    def _attack_blocked(self, action: Action, verdict: dict) -> None:
+        kernel = self.kernel
+        kernel.tally("attacker_blocked")
+        names = ", ".join(sorted(verdict["failures"]))
+        why = "; ".join(f"{k}: {v}" for k, v in sorted(verdict["failures"].items()))
+        kernel.log("attack-block", why[:300])
+        if self.on_attack_block is not None:
+            try:
+                self.on_attack_block(dict(self.workspace.changed_files()))
+            except Exception:   # a bench probe must never break the run
+                pass
+        self._remember_failure("attacker-failed", self._edit_desc(),
+                               f"extra tests broke the fix: {why}")
+        feedback = (f"finish rejected: the attacker's extra tests fail on your "
+                    f"fix ({names}). {verdict.get('note', '')[:600]} Fix the "
+                    f"root cause for the cases they probe, or withhold.")
+        self.last_rejected = feedback
+        self._record(action, feedback)
+        return None
+
     def _withheld(self, reason: str, chosen: bool = False) -> dict:
         if self.memory is not None and self.task == "fix" and self._baseline_failure:
             kind = "withheld" if chosen else "dead-end"
@@ -384,6 +428,8 @@ class Agent:
                                f"run ended without a fix: {reason}"[:240])
         result = {"outcome": "withheld", "reason": reason,
                   "withhold_chosen": chosen}
+        if self.attack is not None:
+            result["attacker"] = dict(self.attack.stats)
         if self.task == "ask":
             result["answer"] = IDK
         return result
@@ -398,7 +444,8 @@ def run_fix(target: str | Path, backend: Backend,
             test_timeout: float = 60.0, policy: dict | None = None,
             verbose: bool = False, bucket: BoundBucket | None = None,
             inner_enabled: bool = True, announce=None,
-            request: str = "", attempt_memory: bool = True) -> dict:
+            request: str = "", attempt_memory: bool = True,
+            attacker=None, on_attack_block=None) -> dict:
     bucket = bucket or BoundBucket(model=backend.name)
     with Workspace(Path(target), test_timeout=test_timeout, bucket=bucket,
                    inner_enabled=inner_enabled,
@@ -408,7 +455,11 @@ def run_fix(target: str | Path, backend: Backend,
             announce(ws.sandbox.describe())
         agent = Agent(backend, ws, task="fix", question=request,
                       memory=memory,
-                      policy=policy, verbose=verbose, bucket=bucket)
+                      policy=policy, verbose=verbose, bucket=bucket,
+                      attacker=attacker, on_attack_block=on_attack_block)
+        if announce and agent.attack is not None:
+            announce(f"[attacker] {agent.attack.attacker.name}: extra tests "
+                     f"before every commit (--no-attacker to disable)")
         report = agent.run(max_steps=max_steps)
     report["target"] = str(target)
     return report

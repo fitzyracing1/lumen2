@@ -48,6 +48,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-attempt-memory", action="store_true",
                         help="disable outer-layer memory of failed attempts "
                              "(for A/B comparison)")
+    parser.add_argument("--attacker-model", default=None, metavar="SPEC",
+                        help="attacker model (default: same as --model)")
+    parser.add_argument("--no-attacker", action="store_true",
+                        help="disable the attacker stage (A/B)")
     parser.add_argument("--bucket", default=None, metavar="FILE",
                         help="BoundBucket limits (.toml/.json), fresh per fixture")
     args = parser.parse_args(argv)
@@ -58,6 +62,17 @@ def main(argv: list[str] | None = None) -> int:
     except BackendError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    attacker = None
+    if not args.no_attacker:
+        from lumen2.attacker import from_spec as attacker_from_spec
+        try:
+            attacker = attacker_from_spec(args.attacker_model or args.model,
+                                          base_url=args.base_url,
+                                          api_key_env=args.api_key_env)
+        except BackendError as exc:
+            print(f"error: attacker: {exc}", file=sys.stderr)
+            return 2
+        print(f"attacker: {attacker.name}", flush=True)
     ok, message = preflight(backend)
     print(message, flush=True)
     if not ok:
@@ -91,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
                            test_timeout=args.test_timeout, memory=memory,
                            only=only,
                            attempt_memory=not args.no_attempt_memory,
+                           attacker=attacker,
                            progress=lambda msg: print(msg, flush=True))
 
     if args.out:
@@ -98,7 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         slug = re.sub(r"[^a-z0-9.]+", "-", report["model"].lower()).strip("-")
         prefix = RESULTS_DIR / (slug + ("-mem" if memory else "")
-                                + ("-noattempt" if args.no_attempt_memory else ""))
+                                + ("-noattempt" if args.no_attempt_memory else "")
+                                + ("-attacker" if attacker else ""))
     prefix.parent.mkdir(parents=True, exist_ok=True)
     markdown = format_markdown(report)
     prefix.with_name(prefix.name + ".json").write_text(

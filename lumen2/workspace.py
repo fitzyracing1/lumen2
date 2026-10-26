@@ -278,6 +278,16 @@ class Workspace:
         pieces.append(f"exit code: {res.returncode}")
         return _truncate("\n".join(pieces))
 
+    def original_root(self) -> Path:
+        """A pristine copy of the original tree, outside the scratch root
+        (used to check attacker tests against the unpatched code)."""
+        orig = self._tmp / "original"
+        if not orig.is_dir():
+            shutil.copytree(self.target, orig,
+                            ignore=shutil.ignore_patterns(*IGNORED_DIRS)) \
+                if self.target is not None else orig.mkdir()
+        return orig
+
     # -- diffing and commit ------------------------------------------------------
 
     def changed_files(self) -> dict[str, str]:

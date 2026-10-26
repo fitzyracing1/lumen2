@@ -50,8 +50,28 @@ def add_bucket_args(parser: argparse.ArgumentParser) -> None:
                              "(default: bucket setting, off)")
     parser.add_argument("--no-attempt-memory", action="store_true",
                         help="disable outer-layer memory of failed attempts")
+    parser.add_argument("--attacker-model", default=None, metavar="SPEC",
+                        help="attacker that writes extra tests before every "
+                             "commit (default: xai:grok-4.6, or stub when "
+                             "--model is stub; same spec syntax as --model)")
+    parser.add_argument("--no-attacker", action="store_true",
+                        help="disable the attacker stage")
     parser.add_argument("--no-inner-sandbox", action="store_true",
                         help="disable the inner sandbox layer (testing only)")
+
+
+def build_attacker(args, model_name: str):
+    """The attacker for fix tasks, or None with --no-attacker.
+    Raises BackendError on a bad spec / missing key."""
+    import os
+    if getattr(args, "no_attacker", False):
+        return None
+    from lumen2.attacker import from_spec
+    spec = (args.attacker_model or os.environ.get("LUMEN2_ATTACKER_MODEL")
+            or ("stub" if model_name == "stub" else "xai:grok-4.6"))
+    return from_spec(spec, base_url=None,
+                     api_key_env=args.api_key_env if spec.startswith(
+                         model_name.split(":")[0] + ":") else None)
 
 
 def build_bucket(args, model_name: str):
@@ -125,6 +145,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     memory = Memory(args.memory) if args.memory else None
+    try:
+        attacker = (build_attacker(args, backend.name)
+                    if args.command in ("fix", "chat") else None)
+    except BackendError as exc:
+        print(f"error: attacker: {exc} (or pass --no-attacker)", file=sys.stderr)
+        return 2
 
     if args.command == "fix":
         report = run_fix(args.target, backend, memory=memory,
@@ -133,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                          bucket=build_bucket(args, backend.name),
                          inner_enabled=not args.no_inner_sandbox,
                          attempt_memory=not args.no_attempt_memory,
-                         announce=print)
+                         attacker=attacker, announce=print)
         _emit(report, args.out)
         print(_fix_banner(report))
         return 0 if report["outcome"] == "committed" else 1
@@ -155,7 +181,8 @@ def main(argv: list[str] | None = None) -> int:
             bucket_factory=lambda: build_bucket(args, backend.name),
             memory=memory, max_steps_ask=args.max_steps,
             max_steps_fix=args.max_fix_steps,
-            inner_enabled=not args.no_inner_sandbox, verbose=args.verbose)
+            inner_enabled=not args.no_inner_sandbox, verbose=args.verbose,
+            attacker=attacker)
         return chat_loop(session)
     return 2
 
@@ -180,6 +207,7 @@ def _fix_banner(report: dict) -> str:
     return (f"{head}\n(steps={report['steps']} tokens={report['tokens']} "
             f"time={report['seconds']}s cheats_caught={cheats} "
             f"bucket_breaches={breaches} "
+            f"attacker_blocks={stats.get('attacker_blocked', 0)} "
             f"backend={report['backend']})")
 
 

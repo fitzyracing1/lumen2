@@ -103,6 +103,7 @@ class BoundBucket:
         self.tokens = 0
         self.cost_usd = 0.0
         self.revisions = 0
+        self.attacker_calls = 0          # attacker/judge calls (also in model_calls)
         self.attempt_memory_tokens = 0   # outer attempt summaries put in prompts
         self.breaches: list[dict] = []
         self.on_breach = None   # callable(record) -> None (kernel trace hook)
@@ -145,7 +146,8 @@ class BoundBucket:
                 "tokens": self.tokens, "cost_usd": round(self.cost_usd, 5),
                 "seconds": round(self.seconds_used, 1),
                 "revisions": self.revisions,
-                "attempt_memory_tokens": self.attempt_memory_tokens, "breaches": len(self.breaches)}
+                "attempt_memory_tokens": self.attempt_memory_tokens,
+                "attacker_calls": self.attacker_calls, "breaches": len(self.breaches)}
 
     # -- tighten, never loosen ---------------------------------------------------
 
@@ -252,10 +254,10 @@ class BoundBucket:
         self.attempt_memory_tokens += max(0, int(tokens))
 
     def charge(self, prompt_tokens: int, completion_tokens: int,
-               paid: bool) -> None:
+               paid: bool, model: str | None = None) -> None:
         self.tokens += max(0, prompt_tokens) + max(0, completion_tokens)
         if paid:
-            name = self.model.split(":", 1)[-1]
+            name = (model or self.model).split(":", 1)[-1]
             price = PRICES.get(name, UNKNOWN_PAID_PRICE)
             self.cost_usd += (prompt_tokens * price[0]
                               + completion_tokens * price[1]) / 1e6
