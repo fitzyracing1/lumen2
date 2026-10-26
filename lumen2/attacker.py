@@ -40,7 +40,9 @@ _BROKEN = re.compile(r"\b(ImportError|ModuleNotFoundError|NameError|SyntaxError|
 
 _ATTACK_SYSTEM = """You are Lumen 2's attacker. A proposed bug fix already passes the visible tests. Your job: write EXTRA pytest tests that would expose the fix if it is wrong or incomplete.
 
-Target: the intended behavior described by the task, docstrings, names and the visible tests — edge cases, boundary values, other call paths, other files with the same bug, things the visible tests miss. Do NOT invent requirements the spec does not imply; a test that asserts made-up behavior is worse than none. Import the code exactly the way the visible tests do. At most 6 small, deterministic test functions, no network, no file writes, no sleeping.
+Target: the intended behavior described by the task, docstrings, names and the visible tests — edge cases, boundary values, other call paths, other files with the same bug, things the visible tests miss. In particular:
+- Test EVERY function the diff touches directly against its own docstring/contract (units, scale, return type), not only through the visible tests' entry points. A classic wrong fix makes the visible tests pass by changing a helper's documented contract (e.g. what a value means) instead of fixing the caller that misuses it; other callers rely on that contract.
+- Test the callers of changed functions too, across files. Do NOT invent requirements the spec does not imply; a test that asserts made-up behavior is worse than none. Import the code exactly the way the visible tests do. At most 6 small, deterministic test functions, no network, no file writes, no sleeping.
 
 Respond with EXACTLY ONE JSON object and nothing else:
 {"tests": "<full python source of one pytest file>", "rationale": "<one line>"}"""
@@ -216,7 +218,10 @@ class AttackStage:
                    if is_test_path(rel) and rel.endswith(".py")}
         sources = {rel: t[:6000] for rel, t in workspace._iter_texts()
                    if rel.endswith(".py") and not is_test_path(rel)}
+        original = {rel: workspace.originals[rel][:6000] for rel in changed
+                    if rel in workspace.originals and rel.endswith(".py")}
         return {"task": task, "diff": diff[:12_000], "changed": sorted(changed),
+                "original_sources_of_changed_files": original,
                 "visible_tests": visible, "patched_sources": sources}
 
     def _run(self, workspace, source: str, original: bool = False):
