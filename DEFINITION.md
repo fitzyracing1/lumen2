@@ -60,6 +60,14 @@ prompts receive its summary; executed code never can, since it exists only in
 the outer process's memory. Size-capped and charged to the bucket; disable
 with `--no-attempt-memory`.
 
+Before any commit, an attacker stage (`lumen2/attacker.py`; idea by Joshua
+Almeida) has a separate model write extra tests against the verified diff.
+They run only in the inner sandbox's throwaway copy (never in the scratch
+workspace, never exported); a valid failure rejects the attempt into the
+attempt memory. Broken or off-spec attacker tests are dropped (original-code
+comparison + critic judgment). Every attacker call is a bucket model call.
+Disable with `--no-attacker`.
+
 ## Threat model (honest)
 
 What the layers are for: a model that is wrong, sloppy, or "creative" —

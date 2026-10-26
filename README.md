@@ -253,6 +253,33 @@ informed by the first.
 - On by default; `--no-attempt-memory` (in `lumen2 fix` and `lumen2.bench`)
   turns it off for A/B runs.
 
+## Attacker stage (give it grok to attack)
+
+Idea credited to **Joshua Almeida**. After the kernel verifies a `finish`
+(visible tests green, cheat scan clean) and *before* anything is committed, a
+separate attacker model (`lumen2/attacker.py`; default `xai:grok-4.6` via
+`XAI_API_KEY`, `--attacker-model SPEC`, `stub` offline) reads the task, the
+proposed diff, the original and patched sources, and the visible tests, and
+writes extra pytest tests that try to break the fix.
+
+- The generated tests run in the inner sandbox against the patched code. They
+  are written only into that run's throwaway copy, never into the scratch
+  workspace, so they can never appear in the exported diff; visible tests stay
+  read-only (tested).
+- A surviving failure rejects the attempt: no commit, the failure goes into
+  the attempt memory and the rejection feedback, and the next proposal must
+  also pass the kept attacker tests.
+- Bad-test guard: tests that error on both original and patched code
+  (import/name/syntax errors) are dropped; tests that pass on the original but
+  fail on the patch are regressions and kept; the rest are judged by the
+  critic (attacker model) and dropped if they do not reflect the spec.
+- Bounded: at most 2 generations and 3 judge calls per run, every call through
+  `BoundBucket.authorize_model_call` and charged at the attacker model's price
+  (`attacker_calls` in the bucket usage). Over budget it is skipped and logged.
+- On by default in `lumen2 fix`, `lumen2 chat` and `lumen2.bench`
+  (stub attacker when `--model stub`); `--no-attacker` turns it off.
+  Results: [`bench/results/SUMMARY.md`](bench/results/SUMMARY.md).
+
 ## Memory that must not suppress action
 
 v1's memory persisted belief priors and policy between runs; a bad streak made
